@@ -26,7 +26,7 @@
    ```sh
    iostat_alert testmail
    ```
-* Install as service
+* Monitoring as a service with email notifications (by default once in 20 min)
    ```sh
    iostat_alert setup
    ```
@@ -35,6 +35,13 @@
    # 10 0 * * * /root/bin/iostat_alert stop >/dev/null 2>&1; /root/bin/iostat_alert start >/dev/null 2>&1
    ```
    
+   
+   
+<!-- Configure -->
+## Configuration
+
+You can change default configuration by editing iostat_alert itself with your favorite VIM editor.
+
 
 
 <!-- CONTRIBUTING -->
