@@ -64,14 +64,14 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 
 
-<!-- SEE ALSO -->
-## See also
-
-sendEmail: [https://github.com/mogaal/sendemail](https://github.com/mogaal/sendemail)
-
-
-
 <!-- CONTACT -->
 ## Contact
 
 Project Link: [https://github.com/ovc/iostat_alert](https://github.com/ovc/iostat_alert)
+
+
+
+<!-- SEE ALSO -->
+## See also
+
+sendEmail: [https://github.com/mogaal/sendemail](https://github.com/mogaal/sendemail)
