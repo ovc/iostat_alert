@@ -1,4 +1,4 @@
-# Iostat Alert for OS Solaris
+# Iostat Latency Alert for OS Solaris
 
 
 
