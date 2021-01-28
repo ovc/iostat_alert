@@ -40,7 +40,7 @@
 <!-- Configure -->
 ## Configuration
 
-You can change default configuration by editing iostat_alert itself with your favorite VIM editor.
+You can change default configuration by editing `iostat_alert` itself with your favorite VIM editor.
 
 
 
