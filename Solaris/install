@@ -1,0 +1,5 @@
+mkdir -p /root/bin
+curl -sk https://report.sh.bc/iostat_alert/$(uname -o)/iostat_alert -o /root/bin/iostat_alert
+chmod u+x /root/bin/iostat_alert
+grep -q 'export PATH="$HOME/bin:$PATH' ~/.profile || printf "\nexport PATH=\"\$HOME/bin:\$PATH\"\n" >> ~/.profile
+

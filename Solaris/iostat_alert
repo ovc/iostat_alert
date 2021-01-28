@@ -1,0 +1,297 @@
+#!/bin/bash
+
+mail_to="mymail@here.tld"
+mail_cc=""
+
+# prod_sid="kssp2"
+prod_sid="$(ps -u oracle -o args | awk -F'_' '/ora_.mon_/ {print $3}' | head -n1)"
+
+max_latency_micro_seconds=2000
+
+iostat_check_interval=3
+iostat_check_count=5
+iostat_check_pause=10
+sending_mail_interval=900
+
+asm_luns_size_gb=500
+search_luns="awk '/${asm_luns_size_gb}.00GB/ || /1000.00GB/ || /2000.00GB/ {print \$2}'"
+iostat_alert_pid="/var/run/iostat_alert.pid"
+
+send_io_alert() {
+asm_luns=$(echo | format | eval ${search_luns} | tr '\n' ' ')
+(
+echo "From: IOstat <iostat@$(hostname)>";
+echo "To: ${mail_to}";
+echo "Bcc: ${mail_cc}";
+echo "Subject: $(hostname) - ${sending_mail_subject}";
+echo "MIME-Version: 1.0"
+echo "Content-Type: text/html"
+echo "Content-Disposition: inline"
+echo "
+<html>
+<body>
+<pre style="font: monospace">$(echo "<h2>${sending_mail_header} $(hostname)</h2>";)</pre>
+<pre style="font: monospace">$(echo "<strong>$(hostname)</strong>"; ifconfig -a | egrep -e 'inet 10' | awk '{print $2}' | xargs; echo "<br />${sum_avg_rs_t//./}<br />";)</pre>
+<pre style="font: monospace">$(iostat -xnc -Td ${asm_luns} 3 5)</pre>
+<pre style="font: monospace">$(echo "<br /><br />";)</pre>
+<pre style="font: monospace">
+Output
+    The output of the iostat utility includes the following information.
+
+    device    name of the disk
+
+    r/s       reads per second
+
+    w/s       writes per second
+
+    kr/s      kilobytes read per second
+
+              The average I/O size during the interval can be computed from
+              kr/s divided by r/s.
+
+    kw/s      kilobytes written per second
+
+              The average I/O size during the interval can be computed from
+              kw/s divided by w/s.
+
+    wait      average  number  of  transactions  waiting for service (queue
+              length)
+
+              This is the number of  I/O  operations  held  in  the  device
+              driver queue waiting for acceptance by the device.
+
+    actv      average   number  of  transactions  actively  being  serviced
+              (removed from the queue but not yet completed)
+
+              This is the number of I/O operations accepted,  but  not  yet
+              serviced, by the device.
+
+    svc_t     average response time of transactions, in milliseconds
+
+              The  svc_t  output  reports the overall response time, rather
+              than the service time, of a device. The overall time includes
+              the  time  that  transactions  are in queue and the time that
+              transactions are being serviced. The time spent in  queue  is
+              shown  with  the  -x  option in the wsvc_t output column. The
+              time spent servicing transactions is the true  service  time.
+              Service  time is also shown with the -x option and appears in
+              the asvc_t output column of the same report.
+
+    %w        percent of time there are transactions  waiting  for  service
+              (queue non-empty)
+
+              For  NFS,  this is the percent of time that there is at least
+              one asynchronous request waiting to be started
+
+    %b        percent of time the disk is busy (transactions in progress)
+
+               For NFS, this is the percent of time that there is at  least
+              one  pending  NFS  RPC,  that is, the system is waiting for a
+              reply from the server
+
+    wsvc_t    average service time in wait queue, in milliseconds
+
+    asvc_t    average service time of active transactions, in milliseconds
+
+    st        percent of CPU time which was taken off  by  the  hypervisor.
+              Always zero when running on physical hardware.
+</pre>
+</body>
+</html>
+") | /usr/sbin/sendmail ${sendmail_key}
+}
+
+iostat_check_old() {
+  iostat -xnu ${asm_luns} | sed -e '1,2d' | while read A B C D E F G H I J K L; do avg_rt=$(echo "${G}+${H}"|bc -l); avg_rt=${avg_rt//./}; if [ ${avg_rt} -ge ${micro_seconds} ]; then send_io_alert; sleep ${iostat_mail_interval}; break; fi; done
+}
+
+iostat_check_main() {
+i=0; sum_avg_rs_t=0
+until [ $i -ge ${iostat_check_count} ]
+do
+  avg_luns_rs_t=$(iostat -xnu ${asm_luns} 1 2 | tail -${num_of_asm_luns}| awk '/d0/ {printf "%.3f\n", ($7+$8)}' | tr '\n' '+')
+  avg_luns_rs_t=$(echo "${avg_luns_rs_t::-1}" | bc -l)
+  avg_luns_rs_t=$(echo "scale=3; ${avg_luns_rs_t}/${num_of_asm_luns}" | bc -l)
+  sum_avg_rs_t=$(echo "scale=3; ${sum_avg_rs_t}+${avg_luns_rs_t}" | bc -l)
+  ((i=i+1))
+  sleep
+[ $i -ge ${iostat_check_count} ] || sleep ${iostat_check_interval}
+done
+sum_avg_rs_t=$(echo "scale=3; ${sum_avg_rs_t}/${iostat_check_count}" | bc -l)
+}
+
+iostat_check_main_alt() {
+i=0; sum_avg_rs_t=0
+until [ $i -ge ${iostat_check_count} ]
+do
+  avg_luns_rs_t=$(iostat -xnu ${asm_luns} | awk '/d0/ {printf "%.3f\n", ($7+$8)}' | tr '\n' '+')
+  avg_luns_rs_t=$(echo "${avg_luns_rs_t::-1}" | bc -l)
+  avg_luns_rs_t=$(echo "scale=3; ${avg_luns_rs_t}/${num_of_asm_luns}" | bc -l)
+  sum_avg_rs_t=$(echo "scale=3; ${sum_avg_rs_t}+${avg_luns_rs_t}" | bc -l)
+  ((i=i+1))
+  sleep
+ [ $i -ge ${iostat_check_count} ] || sleep ${iostat_check_interval}
+done
+sum_avg_rs_t=$(echo "scale=3; ${sum_avg_rs_t}/${iostat_check_count}" | bc -l)
+}
+
+iostat_check_service() {
+ if $(ps -u oracle -o args | grep -q "ora_.mon_${prod_sid}"); then
+    printf "$$" > ${iostat_alert_pid}
+    asm_luns=$(echo | format | eval ${search_luns} | tr '\n' ' ')
+    num_of_asm_luns=$(echo ${asm_luns} | wc -w)
+    while true; do
+      iostat_check_main
+      if [ ${sum_avg_rs_t//./} -ge ${max_latency_micro_seconds} ]; then send_io_alert; sleep ${sending_mail_interval}; fi;
+      sleep ${iostat_check_pause}
+    done
+    else
+      echo "It's STANDBY, it'll start on PROD"
+      exit
+  fi
+}
+
+iostat_stop_service() {
+  if [ -f ${iostat_alert_pid} ]; then
+    echo "Stopping ..."
+    /usr/bin/kill -TERM -$(cat ${iostat_alert_pid})
+    /usr/bin/rm ${iostat_alert_pid}
+    exit
+  else
+    echo "Already stopped? I can't find: ${iostat_alert_pid}"
+    exit
+  fi
+}
+
+iostat_check_once() {
+  asm_luns=$(echo | format | eval ${search_luns} | tr '\n' ' ')
+  num_of_asm_luns=$(echo ${asm_luns} | wc -w)
+  echo "Checking ..."
+  if [ ${check_main_alt} -eq 1 ]; then
+    iostat_check_main_alt
+  else
+    iostat_check_main
+  fi
+  echo "Average latency: ${sum_avg_rs_t//./}"
+  exit
+}
+
+iostat_alert_service_setup() {
+  if crontab -l | grep -q 'iostat_alert'; then
+    echo "it's already been there, try to check 'crontab -l'"
+  else
+    echo '10 0 * * * /root/bin/iostat_alert stop >/dev/null 2>&1; /root/bin/iostat_alert start >/dev/null 2>&1' | tee -a /var/spool/cron/crontabs/root
+   echo 'Done!'
+  fi
+  exit
+}
+
+iostat_alert_help() {
+cat <<-EOF
+Usage: iostat_alert [start|stop|check|once|testmail|setup|status|help]
+
+Installation Steps
+  Step 1: # curl -sk https://report.sh.bc/iostat_alert/$(uname -o)/install | sh
+  Step 2: # source ~/.profile
+  Step 3: # iostat_alert check
+  Step 4: # iostat_alert testmail
+  Step 5: # iostat_alert setup
+EOF
+}
+
+check_os_family() {
+if ! uname -o | grep -q 'Solaris'; then echo "If you want to run this you need a diffrent Operating System, try Solaris OS."; exit; fi
+}
+
+check_smtp() {
+if ! svcs -o state sendmail | grep -q 'online'; then echo "Check the state of sendmail service. For example: svcs -o state sendmail"; exit; fi
+}
+
+case $1 in
+  start)
+    check_os_family
+    check_smtp
+    sending_mail_subject="IO response time has increased"
+    sending_mail_header="IO response time has increased on"
+    sendmail_key="-t"
+    iostat_check_service
+    ;;
+ stop)
+    check_os_family
+    iostat_stop_service
+    ;;
+  check)
+    check_os_family
+    check_main_alt=0
+    iostat_check_once
+    ;;
+  check_alt)
+    check_os_family
+    check_main_alt=1
+    iostat_check_once
+    ;;
+  once)
+    check_os_family
+    iostat -xnc -Td $(echo | format | eval ${search_luns} | tr '\n' ' ') 3 5
+    ;;
+  testmail)
+    check_os_family
+    check_smtp
+    sending_mail_subject="Test message"
+    sending_mail_header="Test message from"
+    sendmail_key="-v -t"
+    send_io_alert
+    exit
+    ;;
+  setup)
+    check_os_family
+    check_smtp
+    iostat_alert_service_setup
+    exit
+    ;;
+  status)
+    check_os_family
+    while true; do ps -ef | grep iostat_alert | egrep -v 'grep|status'; sleep 1; clear; done
+    exit
+    ;;
+  help)
+    check_os_family
+    iostat_alert_help
+    exit
+    ;;
+  *)
+    echo "Usage: iostat_alert [start|stop|check|once|testmail|setup|status|help]"
+    exit
+    ;;
+esac
+
+################################################################################
+#
+#  Usage: iostat_alert [start|stop|check|once|testmail|setup|status|help]
+#
+#  Installation Steps
+#    Step 1: # curl -sk https://report.sh.bc/iostat_alert/$(uname -o)/install | sh
+#    Step 2: # source ~/.profile
+#    Step 3: # iostat_alert check
+#    Step 4: # iostat_alert testmail
+#    Step 5: # iostat_alert setup
+#
+#  Additional information
+#
+#    search_luns="awk '/500.00GB/ {print \$2}'"
+#    search_luns="awk '/500.00GB/ || /2000.00GB/ {print \$2}'"
+#    10 0 * * * /root/bin/iostat_alert stop >/dev/null 2>&1; /root/bin/iostat_alert start >/dev/null 2>&1
+#
+#    iostat -xnu $(echo | format | awk '/500.00GB/ {print $2}' | tr '\n' ' ') | awk '/d0/ {printf $3"\t"$4"\t"$7"\t"$8"\t"$11"\n"}'
+#    iostat -xnu $(echo | format | awk '/500.00GB/ {print $2}' | tr '\n' ' ') | awk '/d0/ {printf $3"\t"$4"\t" ($7+$8)"\t"$11"\n"}'
+#    iostat -xnu $(echo | format | awk '/500.00GB/ {print $2}' | tr '\n' ' ') | awk '/d0/ {printf ($7+$8)"\t"$11"\n"}'
+#    iostat -xnc -Td $(echo | format | awk '/500.00GB/ {print $2}' | tr '\n' ' ') 3 5
+#
+#     # install
+#     mkdir -p /root/bin
+#     curl -sk https://report.sh.bc/iostat_alert/$(uname -o)/iostat_alert -o /root/bin/iostat_alert
+#     chmod u+x /root/bin/iostat_alert
+#     grep -q 'export PATH="$HOME/bin:$PATH' ~/.profile || printf "\nexport PATH=\"\$HOME/bin:\$PATH\"\n" >> ~/.profile
+#
+################################################################################
+
